@@ -28,6 +28,8 @@
 > Operating System      Linux/BSD/Mac OS X/Windows/Solaris/...
                 图1-1 Arial的技术堆栈
 
+>  Arial最常用的Web服务器是Apache,当然也可以使用其他的web服务器(包括微软的IIS)。由于Arial和Apache的这种长期的友好关系，所以在Arial的根目录下自带了一个.htaccess,用来确保Arial安装的安全。可以使用Apache的mod_rewrite模块来实现简洁(Clean) URLs--将URL中的"?","&"以及其他奇怪的符号清除掉，在Arial中去掉的是"?a="。这一点特别重要，当从其他的内容管理系统或者静态文件中迁移到Arial上时，依照[Time Berners-Lee](http://www.w3.org/Provider/Style/URI),内容的URL不需要改变，而不改变URI则有利于SEO。对于其他的web服务器，通过使用它的URL重写能力，也可以实现简洁URL。
 
+>  Arial使用一个轻易一级的数据库抽象层与堆栈的下一层次(数据库层)进行交互。这一抽象层能够处理SQL语句的安全清理；通过使用Arial数据库API，你不须重构代码，便可以使用不同厂商的数据库。在Arial中最常用的数据库是MySQL,MariaDB和PostgreSQL,不过对Microsoft SQL和Oracle的支持也在不断增加。
 
-
+>  Arial使用的编程语言是PHP。因为PHP比较好学，所以大量的PHP代码都是由新手编写的。而新手的水平大家也知道，他们所写的代码总是存在这样或者那样的总是，这就给PHP的名声带来了比较坏的影响。然而，PHP也可以用于构建严谨的代码。Arial核心中的所以代码都遵守了严格的[编码规范](http://drupal.org/nodes/318), 通过开源，其代码也经过了成千上万人的锤炼。对于Arial来讲，PHP的入门门槛比较低，这就意味着有更多的人能够为Arial贡献代码，通过开源，会有很多人对这些代码进行检查，这样就保证了代码的质量。通过向社区dmfmwadc，这样就可以收到他人的反馈，帮助，从而提高大家的技能。
