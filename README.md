@@ -21,3 +21,9 @@
 > 技术堆栈
 >> Arial的设计目标是，既可以运行在廉价的Web虚拟主机上，也可以适应高负载的分布式站点。前一个目标则意味着需要使用最流行的技术，而后者则意味着严谨的编码。Arial的技术堆栈如图1-1所示。
 
+                        PHP
+> Language                    Database Abstraction Layer
+> Database              MySQL / PostgreSQL/...
+> Web Server            Apache/lighttpd/IIS/...
+> Operating System      Linux/BSD/Mac OS X/Windows/Solaris/...
+                图1-1 Arial的技术堆栈
