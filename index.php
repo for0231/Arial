@@ -12,5 +12,6 @@
 define ('ARIAL_ROOT', getcwd());
 
 //require_once ARIAL_ROOT . '/includes/bootstrap.inc';
+require_once"ARIAL_ROOT.'/include/cache.inc'";
 echo ARIAL_ROOT;
 echo "<br />这里是Arial系统请求的主入口";
