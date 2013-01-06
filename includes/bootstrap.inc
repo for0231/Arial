@@ -252,3 +252,98 @@ define ('ARIAL_PHP_FUNCTIONS_PATTERN', '[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*
  * 嵌套的数组的内容。
  * 仅写入到顶层的数组元素是可能的。
  * 因此，如果你以前设置的对象 $object['foo'] = array(1, 2, 'bar' => 'baz'),要修改该对象的'bar'的值'baz'为'foobar',不能这样修改$object['foo']['bar'] = 'foobar'.相反，你必须使用新的对象$object['foo'] = array(1, 2, 'bar' => 'foobar')覆盖整个$object['foo']对象。
+ * 由于这个相同的限定，尝试创建引用到任何包括数据，嵌套或其他方式都将失败。
+ * 因此$var = &$object['foo']将不抛出错误，并且$var的数据将被$object对象填充,
+ * 但该数据将被传值，而不是引用传递。 
+ * 查看PHP官方文档获取更多的信息. 
+ * http://php.net/manual/en/arrayaccess.offsetget.php on
+ * ArrayAccess::offsetGet()
+ *
+ * 默认情况下，缓存调用函数可能会要求在阵列中不会存在，
+ * 即使在高速缓存重建键的类账户。
+ * 这可以防止高速缓存重建的情况下,因为一个丢失的元素一遍又一遍的触发。
+ * 这些情况在内部存储为NULL值。
+ * 这意味着，在offsetGet（）和offsetExists（）方法必须被覆盖，
+ * 如果缓存一个数组，最佳的值应该是NULL,$object->offsetExists()
+ * 需要被正确的返回(相当于array_key_exists()和isset()函数)。
+ * 在大多数情况下，这不应该是必要的。 
+ * 扩展这个类必须至少重写resolveCacheMiss()方法并实现该方法。
+ * 默认情况下，该类的offsetSet()这个方法是不会被覆盖的。
+ * 实际上，这意味着分配的偏移量通过ArrayAccess接口将只适用的范围和对象是不会
+ * 被写回永久性缓存。
+ * 这类似于程序代码的静态或持久的缓存模式.
+ * 扩展一个类可能希望更改这种行为,例如重写offsetSet()和增加自动调用persist()功能.
+ *
+ * @see SchemaCache
+ */
+abstract class ArialCacheArray implements ArrayAccess {
+  /**
+   * 缓存 cid | cache_set() 和 cache_get()
+   */
+  protected $cid;
+
+  /**
+   * 缓存 bin | cache_set() 和 cache_get()
+   */
+  protected $bin;
+
+  /**
+   * 数组的键可添加到在请求结束高速缓存
+   */
+  protected $keysToPersist = array();
+
+  /**
+   * 存储的数据本身
+   */
+  protected $storage = array();
+
+  /**
+   * 构建ArialCacheArray对象
+   *
+   * @param $cid
+   *   缓存的cid
+   * @param $bin
+   *   使用bin缓存数据内容
+   */
+  public function __construct($cid, $bin) {
+    $this->cid = $cid;
+    $this->bin = $bin;
+/////////////////// cache_get 未定义 ///////////////////////
+    if ($cached = cache_get($this->cid, $this->bin)) {
+      $this->storage = $cached->data;
+    }
+  }
+
+  /**
+   * 重写ArrayAccess::offsetExists()
+   */
+  public function offsetExists($offset) {
+    return $this->offsetGet($offset) !== NULL;
+  }
+
+  /**
+   * 重写ArrayAccess::offsetGet()
+   */
+  public function offsetGet($offset) {
+    if (isset($this->storage[$offset]) || array_key_exists($offset, $this->storage)) {
+      return $this->storage[$offset];
+    }
+    else {
+      return $this->resolveCacheMiss($offset);
+    }
+  }
+
+  /**
+   * 重写ArrayAccess::offsetSet()
+   */
+  public function offsetSet($offset, $value) {
+    $this->storage[$offset] = $value;
+  }
+
+  /**
+   * 重写ArrayAccess::offsetUnset()
+   */
+  public function offsetUnset($offset) {
+    unset($this->storage[$offset]);
+  }
+}
