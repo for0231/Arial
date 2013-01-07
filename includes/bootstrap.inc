@@ -823,3 +823,619 @@ function arial_get_filename($type, $name, $filename) {
     return $files[$type][$name];
   }
 }
+
+/**
+ * 加载永久性变量表
+ * 
+ * 变量表由variable_set()设置并保存在变量表里的值组成，以及
+ * 那些通过配置文件明确指定的值
+ */
+function variable_initialize($conf = array()) {
+  // 提示: 缓存页面能够提高20%性能
+  if ($cached = cache_get('variables', 'cache_bootstrap')) {
+    $variables = $cached->data;
+  }
+  else {
+    // 丢失的缓存，避免stample
+    $name = 'variable_init';
+    if (!lock_acquire($name, 1)) {
+      // 其他的请求由缓存变量构建
+      // 等待，直到再次执行这个函数时
+      lock_wait($name);
+      return variable_initialize($conf);
+    }
+    else {
+      // 使用变量重新构建
+      $variables = array_map('unserialize', db_query('SELECT name, value FROM {variable}')->fetchAllKeyed());
+      cache_set('variables', $variables, 'cache_bootstrap');
+      lock_release($name);
+    }
+  }
+
+  foreach ($conf as $name => $value) {
+    $variables[$name] = $value;
+  }
+
+  return $variables;
+}
+
+/**
+ * 返回永久性变量
+ *
+ * 基于数据库区别variable_*函数的大小写，避免这个问题，总是
+ * 使用小写做永久变量名
+ *
+ * @param $name
+ *  返回变量的名字
+ * @param $default
+ *  使用的默认值如果该变量没有被设置。
+ * 
+ * @return 
+ *  返回变量值，反序列化必要的值
+ *
+ * @see variable_del()
+ * @see variable_set()
+ */
+function variable_get($name, $default = NULL) {
+  global $conf;
+
+  return isset($conf[$name]) ? $conf[$name] : $default;
+}
+
+/**
+ * 设置永久性变量
+ * 
+ * variable_* 函数是大小写敏感的
+ * 变量名使用小写定义
+ * 
+ * @param $name
+ *  将设置的变量名
+ * @param $value
+ *  将设置的变量值,可以是任何PHP变量类型
+ *
+ * @see variable_del()
+ * @see variable_get()
+ */
+function variable_set($name, $value) {
+  global $conf;
+  
+  db_merge('variable')->key(array('name' => $name))->fields(array('value' => serialize($value)))->execute();
+
+  cache_clear_all('variables', 'cache_bootstrap');
+
+  $conf[$name] = $value;
+}
+
+/**
+ * 删除永久性变量
+ * 
+ * @param $name 
+ *  将删除的变量名
+ * 
+ * @see variable_get()
+ * @see variable_set()
+ */
+function variable_del($name) {
+  global $conf;
+
+  db_delete('variable')
+    ->condition('name', $name)
+    ->execute();
+  cache_clear_all('variables', 'cache_bootstrap');
+
+  unset($conf[$name]);
+}
+
+/**
+ * 获取当前页面的缓存
+ * 
+ * 提示: 当$_SESSION非空时，我们不缓存认证用户和匿名用户的页面
+ * $_SESSION可能包含表单提交的状态信息。购物车信息或者其他用户
+ * 指定的内容等不被缓存而需要显示给其他用户的。
+ * 
+ * $param $check_only
+ *  (可选)仅当此前存在一个缓存条目才设置成TRUE
+ * 
+ * @return 
+ *  如果页面已经存在缓存对象，则返回，否则返回NULL
+ */
+function arial_page_get_cache($check_only = FALSE) {
+  global $base_root;
+  static $cache_hit = FALSE;
+
+  if ($check_only) {
+    return $cache_hit;
+  }
+
+  if (arial_page_is_cacheable()) {
+    $cache = cache_get($base_root . request_uri(), 'cache_page');
+    if ($cache !== FALSE) {
+      $cache_hit = TRUE;
+    }
+    return $cache;
+  }
+}
+
+/**
+ * 确定缓存当前页面
+ * 
+ * @param $allow_caching
+ *  如果希望阻止缓存当前页面，则设置成FALSE
+ * 
+ * @return 
+ *  如果返回值是TRUE,则缓存当前页面，如果为FALSE,则不缓存
+ */
+function arial_page_is_cacheable($allow_caching) {
+  $allow_caching_static = &arial_static(__FUNCTION__, TRUE);
+  if (isset($allow_caching)) {
+    $allow_caching_static = $allow_caching;
+  }
+
+  return $allow_caching_static && ($_SERVER['REQUEST_METHOD'] == 'GET' || $_SERVER['REQUEST_METHOD'] == 'HEAD') && !arial_is_cli();
+}
+
+/**
+ * 在所有启动模块中调用bootstrap钩子
+ *
+ * @param $hook
+ *  调用的引导钩子名称
+ * 
+ * @see bootstrap_hooks()
+ */
+function bootstrap_invoke_all($hook) {
+  // 当这个函数被调用时，引导模块应该已经被调用，
+  // 因此我们不需要通知module_list()重设它的内部列表
+  // 而且第一个参数被设置成FALSE
+  // 第二个参数设置成TRUE,如果这是第一次调用module_list()函数
+  // 我们应该确保内部模块的首要性
+
+  foreach (module_list(FALSE, TRUE) as $module) {
+    arial_load('module', $module);
+    module_invoke($module, $hook);
+  }
+}
+
+/**
+ * 引入提供的文件类型和文件名
+ * 这可以防止多次引入一个主题、引擎、模块等等。
+ * 
+ * @param $type
+ *  引入的类型(如theme, theme_engine, module)
+ *
+ * @param $name
+ *  引入的名字
+ * 
+ * @return 
+ *  如果已经被加载引入了，则设置成TRUE
+ */
+function arial_load($type, $name) {
+  // 一旦文件被引入，将不能在请求期间扭转，因此在这里不要使用
+  // arial_static函数
+
+  static $files = array();
+
+  if (isset($files[$type][$name])) {
+    return TRUE;
+  }
+
+  $filename = arial_get_filename($type, $name);
+
+  if ($filename) {
+    include_once ARIAL_ROOT . '/' . $filename;
+    $files[$type][$name] = TRUE;
+
+    return TRUE;
+  }
+  
+  return FALSE;
+}
+
+/** 
+ * 设置当前页的HTTP响应头
+ * 
+ * 提示: 当发送一个内容类型头信息时，总是包含一个'charset'类型，
+ * 这能够避免安全问题(例如: UTF-7 XSS)
+ * 
+ * $param $name
+ *  HTTP头名字，或者特殊状态'Status'头名字
+ *
+ * @param $value
+ *  HTTP头的值，如果为FALSE,指定的头信息将删除
+ *  如果$name为'Status', 将为一个状态码，例如: "404 NOT FOUND"
+ * @param $append
+ *  是否添加一个值到已经存在的头信息或替换它。
+ */
+function arial_add_http_header($name, $value, $append = FALSE) {
+  // 头信息的键值对
+  $headers = &arial_static('arial_http_headers', array());
+
+  $name_lower = strtolower($name);
+  _arial_set_preferred_header_name($name);
+
+  if ($value === FALSE) {
+    $headers[$name_lower] = FALSE;
+  }
+  elseif (isset($headers[$name_lower]) && $append) {
+    //  多个标题相同的名字可以合并使用逗号,参见(RFC2616,4.2节
+    $headers[$name_lower] .= ',' . $value;
+  }
+  else {
+    $headers[$name_lower] = $value;
+  }
+  arial_send_headers(array($name => $headers[$name_lower]), TRUE);
+}
+
+/**
+ * 获取当前页HTTP响应头信息
+ * 
+ * @param $name
+ *  HTTP头名字，如果忽略则所有的头信息将返回键值对
+ *  如果一个数组的值为FALSE,该头信息将被删除
+ * @return 
+ *  包含头信息的字符串，或者如果为FALSE时，该头信息已经被设置
+ *  或者为NULL时，该头信息已经被删除
+ */
+function arial_get_http_header($name = NULL) {
+  $headers = &arial_static('arial_http_headers', array());
+  if (isset($name)) {
+    $name = strtolower($name);
+    return isset($headers[$name]) ? $headers[$name] : NULL;
+  }
+  else {
+    return $headers;
+  }
+}
+
+/**
+ * 设置首选的HTTP标头的名称。
+ *
+ * 标题名称是区分大小写的，但最大的兼容性，应遵循“common form”
+ * 参见RFC 2617 4.2节
+ */
+function _arial_set_preferred_header_name($name = NULL) {
+  static $header_names = array();
+
+  if (!isset($name)) {
+    return $header_names;
+  }
+  $header_names[strtolower($name)] = $name;
+}
+
+/**
+ * 发送以前设置的HTTP响应头作为默认值
+ * 
+ * 头信息通过arial_add_http_header()设置
+ * 默认头没有被设置，如果他们已被取代或取消使用
+ * arial_add_http_header（）
+ *
+ * @param $default_headers
+ *  键值对的头信息数组
+ * @param $single
+ *  如果为TRUE表示头信息已经被发送，仅发送指定的头信息
+ */
+function arial_send_headers($default_headers = array(), $only_default = FALSE) {
+  $headers_sent = &arial_static(__FUNCTION__, FALSE);
+  $headers = arial_get_http_header();
+  if ($only_default && $headers_sent) {
+    $headers = array();
+  }
+  $headers_sent = TRUE;
+
+  $header_names = _arial_set_preferred_header_name();
+  foreach ($default_headers as $name => $value) {
+    $name_lower = strtolower($name);
+    if (!isset($headers[$name_lower])) {
+      $headers[$name_lower] = $value;
+      $header_names[$name_lower] = $name;
+    }
+  }
+  foreach ($headers as $name_lower => $value) {
+    if ($name_lower == 'status') {
+      header($_SERVER['SERVER_PROTOCOL'] . ' ' . $value);
+    }
+    // 忽略已删除的头信息
+    elseif ($value) {
+      header($header_names[$name_lower] . ': ' . $value);
+    }
+  }
+}
+/**
+ * 设置HTTP标头中的页面响应的准备
+ *
+ * 经过身份验证的用户总是“没有缓存的头，
+ * 并在每次请求时将获取新的一页。
+ * 这可以防止通过身份验证的用户看到本地缓存的网页。
+ * 也给每个页面独特的ETag。
+ * 这将迫使客户端包括一个If-Modified-Since头
+ * 和一个If-None-Match头做条件请求的页面。引自RFC 2616,13.3.4节
+ * 更强大的验证
+ * 这是一个Mozilla Firefox浏览器中的错误，
+ * 会触发启用Arial的缓存和访问Arial的用户
+ * 通过HTTP代理服务器的解决方法
+ * 参见:https://bugzilla.mozilla.org/show_bug.cgi?id=269303
+ * 当经过身份验证的用户请求一个页面，然后注销并再次请求
+ * 相同的页面，Firefox可能会发送一个有条件的请求是在本地
+ * 缓存，当用户登录页面上。
+ * 如果此页没有一个ETag头，请求只包含一个If-Modified-Since
+ * 头。日期是最近的，因为通过身份验证的用户的Last-Modified头
+ * 总是指当前请求的时间。
+ * 如果用户通过代理服务器访问的Arial，和代理已经有一个缓存的
+ * 副本的匿名页与旧的Last-Modified日期，代理304未修改响应，
+ * 使客户端认为，匿名和验证的综合相同的。
+ *
+ * @see arial_page_set_cache()
+ */
+function arial_page_header() {
+  $headers_sent = &arial_static(__FUNCTION__, FALSE);
+  if ($headers_sent) {
+    return TRUE;
+  }
+  $headers_sent = TRUE;
+
+  $default_headers = array(
+    'Expires' => 'Sun, 19 Nov 1978 05:00:00 GMT',
+    'Last-Modified' => gmdate(DATE_RFC1123, REQUEST_TIME),
+    'Cache-Control' => 'no-cache, must-revalidate, post-check=0, pre-check=0',
+    'ETag' => '"' . REQUEST_TIME . '"',
+  );
+  arial_send_headers($default_headers);
+}
+
+/**
+ * 设置HTTP头中缓存的页面响应的准备。
+ *
+ * 头部允许尽可能地在代理服务器和
+ * 浏览器的页面没有任何特别的知识。
+ * 
+ * 模块可以覆盖这些头文件使用arial_add_http_header()。
+ * 如果请求的是有条件的（使用If-Modified-Since的，如果无匹配
+ * ），和条件与目前在缓存中，发送一个304 Not Modified响应。
+ */
+function arial_server_page_from_cache(stdClass $cache) {
+  // 协商是否使用压缩
+  $page_compression = variable_get('page_compression', TRUE) && extension_loaded('zlib');
+  $return_compressed = $page_compression && isset($_SERVER['HTTP_ACCEPT_ENCODING']) && strpos($_SERVER['HTTP_ACCEPT_ENCODING'], 'gzip') !== FALSE);
+
+   // 获取hook_boot()中设置的头信息，键为小写
+   $hook_boot_headers = arial_get_http_header();
+
+   // 在这个函数中生成的头可能被drupal_add_http_headers函数
+   //替换或取消使用,键是混合的情况。
+   $default_headers = array();
+
+   foreach ($cache-data['headers'] as $name => $value) {
+    // 在一个304响应的情况下，某些头必须被发送，而其它可能不
+    // 参见: RFC 2616 10.3.5节
+    // 在hook_boot()中不要覆盖头设置
+    $name_lower = strtolower($name);
+    if (in_array($name_lower, array('content-location', 'expires', 'cache-control', 'vary')) && !isset($hook_boot_headers[$name_lower])) {
+      arial_add_http_header($name, $value);
+      unset($cache->data['headers'][$name]);
+    }
+   }
+
+   // 如果客户端口发送了一个session cookie，
+   // 高速缓存的副本将只被一个特定的客户端有所不同：
+   // Cookie中。因此，不要设置的max-age> 0，
+   // 允许页面缓存的外部代理，当一个会话cookie是存在的，除非
+   // Vary的标题已在hook_boot()中被取代或取消。
+   $max_age = !isset($_COOKIE[session_name()]) || isset($hook_boot_headers['vary']) ? variable_get('page_cache_maximum_page', 0) : 0;
+   $default_headers['Cache-Control'] = 'public, max-age=' . $max_age;
+
+   // 如果输出变化了，则实体标记也应该变化
+   $etag ='"' . $cache-created . '-' . intval($return_compressed) . '"';
+   header('Etag: ' . $etag);
+
+   // 查看客户端是否提供了需要的HTTP头信息
+   $if_modified_since = isset($_SERVER['HTTP_IF_MODIFIED_SINCE']) ? strtotime($_SERVER['HTTP_IF_MODIFIED_SINCE']) : FALSE;
+
+   $if_none_match = isset($_SERVER['HTTP_IF_NONE_MATCH']) ? stripslashes($_SERVER['HTTP_IF_NONE_MATCH']) : FALSE;
+
+   if ($if_modified_since && $if_none_match
+        && $if_none_match == $etag // etag必须匹配
+        && $if_modified_since == $cache->created) {
+     // if_modified_since必须匹配
+     header($_SERVER['SERVER_PROTOCOL'] . '304 Not Modified');
+     arial_send_headers($default_headers);
+     return ;
+   }
+
+   // 发送余留的头信息
+   foreach ($cache-data['headers'] as $name => $value) {
+    arial_add_http_header($name, $value);
+   }
+
+   $default_headers['Last-Modified'] = gmdate(DATA_RFC1123, $cache->created);
+
+   // HTTP/1.0代理不支持多样化的头信息，从而防止任何缓存发送
+   // 在过去的到期日期。
+   // HTTP/1.1的客户端忽略的Expires头，如果一个
+   // Cache-Control：max-age = directive 指定（请参阅RFC
+   // 2616，14.9.3节）。
+
+   $default_headers['Expires'] = 'Sun, 19 Nov 1978 05:00:00 GMT';
+
+   arial_send_headers($default_headers);
+   // 没有会话cookie的情况下，允许HTTP代理服务器的高速缓
+   // 存匿名用户的页面。
+   // Vary标头是用来表示请求头字段中的一组完全确定缓存是否允
+   // 许使用对于一个给定的URL后续请求的响应回复，无需重新验证
+   // 如果Vary标头已被设置在hook_boot（），它是假定的模块
+   // 知道如何缓存页。
+   if (!isset($hook_boot_headers['vary']) && !variable_get('omit_vary_cookie')) {
+      header('Vary: Cookie');
+   }
+
+   if ($page_compression) {
+      header('Vary: Accept-Encoding', FALSE);
+      // 如果page_compression已被启用，缓存将包含gzip数据
+      if ($return_compressed) {
+        // $cache->data['body'] 已经被gzip压缩了,
+        // 所以一定要确保zlib.output_compression不多次压缩。
+        ini_set('zlib.output_compression', '0');
+        header('Content-Encoding: gzip');
+      }
+      else {
+        // 客户端不支持压缩，因此在缓存中解压缩数据。       
+        // 过滤gzip头和运行解压缩。
+        $cache->data['body'] = gzinflate(substr(substr($cache->data['body'], 10), 0, -8));
+      }
+   }
+
+   // 打印页面
+   print $cache->data['body'];
+}
+
+/**
+ * 定义重要的钩子，保证相应的模块必须加载
+ */
+function bootstrap_hooks(){
+  return array('boot', 'exit', 'watchdog', 'language_init');
+}
+
+/**
+ * 从序列化数据中反序列化和添加元素
+ *
+ * @param $obj
+ *  需要添加的元素对象
+ * @param $field
+ *  反序列化对象$obj的属性
+ */
+function arial_unpack($obj, $field = 'data') {
+  if ($obj->$field && $data = unserialize($obj->$field)) {
+    foreach ($data as $key => $value) {
+      if (!empty($key) && !isset($obj->$key)) {
+        $obj->$key = $value;
+      }
+    }
+  }
+  return $obj;
+}
+
+/**
+ * 翻译一个字符串到当前语言类型或给定语言类型
+ * 
+ * t（）函数有两个目的: 
+ * 首先，在运行时，用户可见的文本转换成相应的语言。
+ * 其次，不同的机制，找出哪些文本需要被翻译工作，关闭t() -
+ * T()内的文字通话将被添加到数据库中的字符串被翻译。
+ * 这些字符串是英文的，所以应该始终是英文的第一个参数。
+ * 要启用一个完全翻译的网站，重要的是，所有的人类可读的文本
+ * 将显示在网站上或发送到用户通过T()函数，或一个相关的功能。
+ * 查看@link http://drupal.org/node/3227239本地化API@enlink
+ * 获取更多信息
+ * 包括建议如何拆散和不拆散字符串翻译。
+ * 不能使用t()翻译变量，例如调用
+ * @code t($text);@endcode, 
+ * 除非文本中变量已经在其他地方通过t()函数的翻译(例: $text
+ * 为几个翻译的文字字符串数组中的一个。更为重要的是从没
+ * 有调用
+ * @code t($user_text); @endcode, $user_text是用户输入的
+ * 字符串，
+ * 这样做可能会导致跨站点脚本攻击和其他安全问题。
+ * 但是，您可以使用字符串中的变量替换，把可变文本，
+ * 如用户名或翻译的文本链接URL。变量替换看起来像这样：
+ * @code 
+ * $text = t("@name's blog", array('@name' => 
+ * format_username($account)));
+ * @endcode
+ * 基本上，你可以把你的字符串变量，如@name放到字符串中
+ * 翻译的时候替换成相应的安全值
+ * 请参阅本地化API的网页上面提到的文件的format_string()
+ * 的详细信息。
+ * 翻译可以重新排列的字符串作为必要的语言（例如，
+ * 在西班牙，它可能是“blog de @name”）。 
+ * 在的Drupal安装阶段，一些需要的本地化的资源使用t()代码将
+ * 不可用。
+ *
+ * @param $string
+ *  一个字符串，包含英文字符串翻译。
+ * @param $args 
+ *  使翻译后的一个关联数组替换。基于密钥的第一个字符，
+ *  被转义值和/或主题。参看format_string()详细信息
+ * @param $options
+ *  一个关联数组的额外的选项，包含下列元素：
+ * - 'langcode' (默认为当前语言): 语言代码是用来指示需要翻译
+ *   成用户页面显示的语言类型.
+ * - 'context'　(默认为空文本):　需要翻译的文本
+ * 
+ * @return 
+ *  被翻译过的字符串
+ * 
+ * @see st()
+ * @see get_t()
+ * @see format_string()
+ * @ingroup sanitization
+ */
+function t($string, array $args = array(), array $options = array()) {
+  global $language;
+  static $custom_strings;
+
+  // 默认合并
+  if (empty($options['langcode'])) {
+    $options['langcode'] = isset($language->language) ? $language->language : 'en';
+  }
+  if (empty($options['context'])) {
+    $options['context'] = '';
+  }
+
+  // 首先，检查的自定义字符串数组。如果存在，使用数组替代
+  // 数据库查询,这是一个高性能的方式，提供极少数的字符串替换
+  // 可以查看settings.php的例子.
+  // 缓存$custom_strings变量提高性能
+  if (!isset($custom_strings[$options['langcode']])) {
+    $custom_strings[$options['langcode']] = variable_get('locale_custom_strings_' . $options['langcode'], array());
+  }
+  
+  //　自定义字符串使用英文方式,即使本地化模块没有启动
+  if (isset($custom_strings[$options['langcode']][$options['context']][$string])) {
+    $string = $custom_strings[$options['langcode']][$options['context']][$string];
+  }
+  // 如果本地化模块已开启,则翻译
+  elseif ($option['langcode'] != 'en' && function_exists('locale')) {
+    $string = locale($string, $options['context'], $options['langcode']);
+  }
+  if (empty($args)) {
+    return $string;
+  }
+  else {
+    return format_string($string, $args);
+  }
+}
+
+/**
+ * 安全值的字符串替换的占位符。
+ *
+ * @param $string
+ *  一个包含占位符的字符串
+ * @param $args
+ *  关联数组的更换,发生在字符串中的任何键$args被替换为
+ *  相应的值
+ * 消毒函数依赖键的首字符:
+ * - !variable: 插入变量,使用该已消毒的变量
+ * - @variable: 使用check_plain()转义HTML
+ * - %variable: 转义为用户提交的内容使用drupal_placeholder()
+ * ，它显示为<em>强调</ em>的文本占位符。
+ *
+ * @see t()
+ * @ingroup sanitization
+ */
+function format_string($string, array $args = array()) {
+  // 插入字符串之前转化该字符串
+  foreach ($args as $key => $value) {
+    switch ($key[0]) {
+      case '@':
+        // 只转义
+        $args[$key] = check_plain($value);
+        break;
+      case '%':
+      default: 
+        // 转义和占位
+        $args[$key] = arial_placeholder($value);
+        break;
+      case '!':
+        // pass
+    }
+  }
+  return strtr($string, $args);
+}
