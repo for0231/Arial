@@ -7,4 +7,3 @@ function menu_get_item($path = NULL, $router_item = NULL) {
   }
 }
 
-echo "Menu file inc";
