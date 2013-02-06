@@ -1,3 +1,7 @@
 <?php
+require 'menu.inc';
 
-echo "this is bootstrap.inc";
+function &arial_static($name, $default_value = NULL, $reset = FALSE) {
+  static $data = array(), $default = array();
+
+}
