@@ -393,7 +393,7 @@ abstract class ArialCacheArray implements ArrayAccess {
       if ($cached = cache_get($this->cid, $this->bin)) {
         $data = $cached->data + $data;
       }
-      cache_get($this->cid, $data, $this->bin);
+      cache_set($this->cid, $data, $this->bin);
       if ($lock) {
         // lock_release 未定义
         lock_release($lock_name);
@@ -706,7 +706,7 @@ function arial_settings_initialize() {
       $cookie_domain = $_SERVER['HTTP_HOST'];
       //从cookie.domain中过滤'www.',端口号
       $cookie_domai = ltrim($cookie_domain, '.');
-      if (strpos($cookie_domain, 'www.') ===0 ) {
+      if (strpos($cookie_domain, 'www.') === 0 ) {
         $cookie_domain = substr($cookie_domain, 4);
       }
       $cookie_domain = explode(':', $cookie_domain);
@@ -766,7 +766,7 @@ function arial_get_filename($type, $name, $filename) {
     $files[$type] = array();
   }
 
-  if (!empty($filename) && $file_exists($filename)) {
+  if (!empty($filename) && file_exists($filename)) {
     $files[$type][$name] = $filename;
   }
   elseif (isset($files[$type][$name])) {
@@ -822,7 +822,7 @@ function arial_get_filename($type, $name, $filename) {
   if (isset($files[$type][$name])) {
     return $files[$type][$name];
   }
-}
+"%!%
 
 /**
  * 加载永久性变量表
@@ -1392,7 +1392,7 @@ function t($string, array $args = array(), array $options = array()) {
     $string = $custom_strings[$options['langcode']][$options['context']][$string];
   }
   // 如果本地化模块已开启,则翻译
-  elseif ($option['langcode'] != 'en' && function_exists('locale')) {
+  elseif ($options['langcode'] != 'en' && function_exists('locale')) {
     $string = locale($string, $options['context'], $options['langcode']);
   }
   if (empty($args)) {
@@ -1546,7 +1546,7 @@ function watchdog_exception($type, Exception $exception, $message = NULL, $varia
 
   require_once ARIAL_ROOT . '/includes/errors.inc';
   $variables += _arial_decode_exception($exception);
-  watchdog($type, $message, $variables, $serverity, $link);
+  watchdog($type, $message, $variables, $severity, $link);
 }
 
 /**
@@ -1714,7 +1714,7 @@ function arial_get_title() {
   $title = drupal_set_title();
 
   // 在引导过程中，menu.inc不包括在内，因此，我们不能提供一个标题
-  if (!issset($title) && function_exists('menu_get_active_title')) {
+  if (!isset($title) && function_exists('menu_get_active_title')) {
     $title = check_plain(menu_get_active_title());
   }
 
@@ -1762,7 +1762,7 @@ function arial_is_denied($ip) {
   // 因为每个页面请求都会调用这个函数,在查询数据库之前我们第一步
   //检查settings.php里的IP地址数组 
 
-  $blocked_ips = variable_get('block_ips');
+  $blocked_ips = variable_get('blocked_ips');
   $denied = FALSE;
   if (isset($blocked_ips) && is_array($blocked_ips)) {
     $denied = in_array($ip, $blocked_ips);
@@ -1853,11 +1853,11 @@ function arial_array_merge_deep() {
  *
  * @see arial_array_merge_deep()
  */
-function arial_merge_deep_array($arrays) {
+function arial_array_merge_deep_array($arrays) {
   $result = array();
 
   foreach ($arrays as $array) {
-    foreach ($arrays as $key => $value) {
+    foreach ($array as $key => $value) {
       // 重新编号的整数键array_merge_recursive（）。
       //注意：PHP自动转换数组的键是整数到整数的字符串(例如，'1')
       if (is_integer($key)) {
@@ -1906,7 +1906,7 @@ function arial_anonyous_user() {
  *  一个常量会告诉你引导运行哪一个阶段,当你执行指定阶段时,
  *　所有早期的阶段都将自动运行,可能的值有:
  * - ARIAL_BOOTSTRAP_CONFIGURATION: 初始化配置。
- * - ARIAL_BOOTSTRAP_PAGE_CACHE: 尝试为被缓存的页面.
+ * - ARIAL_BOOTSTRAP_PAGE_CACHE: 尝试为被页面缓存.
  * - ARIAL_BOOTSTRAP_DATABASE: 初始化数据库层
  * - ARIAL_BOOTSTRAP_VARIABLES: 初始化变量系统
  * - ARIAL_BOOTSTRAP_SESSION: 初始化会话句柄
@@ -1921,7 +1921,7 @@ function arial_anonyous_user() {
  */
 function arial_bootstrap($phase = NULL, $new_phase = TRUE) {
   // 不用arial_static()，因为不依赖于任何运行时信息。
-  static $phase = array(
+  static $phases = array(
     ARIAL_BOOTSTRAP_CONFIGURATION,
     ARIAL_BOOTSTRAP_PAGE_CACHE,
     ARIAL_BOOTSTRAP_DATABASE,
@@ -1938,7 +1938,7 @@ function arial_bootstrap($phase = NULL, $new_phase = TRUE) {
   if ($new_phase) {
     $final_phase = $phase;
   }
-    if (isset($phase)) {
+  if (isset($phase)) {
     // Call a phase if it has not been called before and is below the requested
     // phase.
     while ($phases && $phase > $stored_phase && $final_phase > $stored_phase) {
@@ -1994,7 +1994,7 @@ function arial_bootstrap($phase = NULL, $new_phase = TRUE) {
  */
 function arial_get_user_timezone() {
   global $user;
-  if (variable_get('configure_timezones', 1) && $user->uid && $user->timezone) {
+  if (variable_get('configurable_timezones', 1) && $user->uid && $user->timezone) {
     return $user->timezone;
   }
   else {
@@ -2056,7 +2056,7 @@ function _arial_bootstrap_configuration() {
   set_error_handler('_arial_error_handler');
   set_exception_handler('_arial_exception_handler');
 
-  arial_enviroment_initialize();
+  arial_environment_initialize();
   // 开启页面计时器
   timer_start('page');
   // 初始化配置,并从settings.php文件包含变量
@@ -2152,7 +2152,7 @@ function _arial_bootstrap_database() {
       
       // 删除当前数据库的前缀，取而代之的是我们自己的。
       $value['prefix'] = array(
-        'default' => $current_prefix . $test_prefix;
+        'default' => $current_prefix . $test_prefix,
       );
     }
   }
@@ -2325,7 +2325,7 @@ function arial_installation_attempted() {
  * 
  * @see t()
  * @see st()
- * @ingroup santization
+ * @ingroup sanitization
  */
 function get_t() {
   static $t;
@@ -2415,7 +2415,7 @@ function language_list($field = 'language') {
       $language['language'] = db_query('SELECT * FROM {language} ORDER BY weight ASC, name ASC')->fetchAllAssoc('language');
       // 用户不能卸载英语,但可以隐藏它,因此至少有一种语言已经启用
       if (!$languages['language']['en']->enabled && !variable_get('language_native_enabled', TRUE)) {
-        unset($language['language']['en']);
+        unset($languages['language']['en']);
       }
     }
     else {
@@ -2438,7 +2438,7 @@ function language_list($field = 'language') {
       }
     }
   }
-  return $language[$field];
+  return $languages[$field];
 }
 
 /**
@@ -2645,7 +2645,7 @@ class SchemaCache extends ArialCacheArray {
    */
   public function __construct() {
     // 缓存的请求方法。
-    parent::__construct('schema:runtime:' . ($_SERVER['REMOTE_METHOD'] == 'GET'), 'cache');
+    parent::__construct('schema:runtime:' . ($_SERVER['REQUEST_METHOD'] == 'GET'), 'cache');
   }
 
   /**
@@ -3076,7 +3076,7 @@ function _arial_shutdown_function() {
   chdir(ARIAL_ROOT);
   try {
     while (list($key, $callback) = each ($callbacks)) {
-      call_user_func_array($callback['callback'], $callback['argumetns']);
+      call_user_func_array($callback['callback'], $callback['arguments']);
     }
   }
   catch (Exception $exception) {
